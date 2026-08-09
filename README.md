@@ -11,7 +11,7 @@ npm test                      # integration tests against the test db
 
 `npm run migrate` applies migrations without starting the server; `npm run typecheck` runs `tsc --noEmit`. Config is via env vars with defaults: `PORT`, `DATABASE_URL`, `POLL_INTERVAL_MS`, `MAX_ATTEMPTS`, `BACKOFF_BASE_MS`, `EMAIL_RECIPIENT`.
 
-Endpoints so far: `GET /health` (200 ok / 503 when the database is unreachable), `POST /ingest` (stub).
+Endpoints so far: `GET /health` (200 ok / 503 when the database is unreachable), `POST /ingest` (202 for any storable JSON object — body states `validated` / `validation_failed` / `duplicate`; 400 only for unparseable JSON or non-object bodies).
 
 At Healthtech-1, one of our core responsibilities is to ingest registration forms, transform them, update some external systems and get them ready for future processing (by the FORM-BOT).
 We are sent these forms by a particularly unreliable 3rd party - we should expect them to make schema changes without informing us, send duplicate forms, or generally just be badly behaved!
