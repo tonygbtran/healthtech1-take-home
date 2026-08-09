@@ -1,5 +1,18 @@
 # take-home-test
 
+## Running
+
+```sh
+docker compose up -d --wait   # Postgres 16: app db (5432) and test db (5433)
+npm install
+npm run dev                   # applies pending migrations, then serves on :3000
+npm test                      # integration tests against the test db
+```
+
+`npm run migrate` applies migrations without starting the server; `npm run typecheck` runs `tsc --noEmit`. Config is via env vars with defaults: `PORT`, `DATABASE_URL`, `POLL_INTERVAL_MS`, `MAX_ATTEMPTS`, `BACKOFF_BASE_MS`, `EMAIL_RECIPIENT`.
+
+Endpoints so far: `GET /health` (200 ok / 503 when the database is unreachable), `POST /ingest` (stub).
+
 At Healthtech-1, one of our core responsibilities is to ingest registration forms, transform them, update some external systems and get them ready for future processing (by the FORM-BOT).
 We are sent these forms by a particularly unreliable 3rd party - we should expect them to make schema changes without informing us, send duplicate forms, or generally just be badly behaved!
 As this is important healthcare data, we need to design our systems to be resilient to these kinds of errors.

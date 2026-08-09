@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: forms
+      POSTGRES_PASSWORD: forms
+      POSTGRES_DB: forms
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forms -d forms"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  db-test:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: forms
+      POSTGRES_PASSWORD: forms
+      POSTGRES_DB: forms_test
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forms -d forms_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

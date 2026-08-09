@@ -1,11 +1,20 @@
-import express, { Request, Response } from "express";
+import express, { Express, Request, Response } from "express";
+import { Pool } from "pg";
+import { healthRouter } from "./routes/health";
 
-const app = express();
+export type AppDeps = {
+	pool: Pool;
+};
 
-app.use(express.json());
+export const createApp = ({ pool }: AppDeps): Express => {
+	const app = express();
 
-app.post("/ingest", (req: Request, res: Response) => {
-	res.json({ message: "Ingesting form data" });
-});
+	app.use(express.json());
+	app.use(healthRouter(pool));
 
-export default app;
+	app.post("/ingest", (_req: Request, res: Response) => {
+		res.json({ message: "Ingesting form data" });
+	});
+
+	return app;
+};
