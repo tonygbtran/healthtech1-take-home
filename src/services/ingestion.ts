@@ -19,9 +19,9 @@ const resolveReference = (payload: Record<string, unknown>, payloadHash: string)
 	return `unknown-${payloadHash.slice(0, 16)}`;
 };
 
-// Shared by fresh submissions and corrections: move a form in `received` to
-// validated or validation_failed, with the matching audit event.
-const recordValidationResult = async (
+// Shared by fresh submissions, corrections and retries: move a form in
+// `received` to validated or validation_failed, with the matching audit event.
+export const recordValidationResult = async (
 	client: PoolClient,
 	formId: string,
 	applicationReference: string,

@@ -14,6 +14,7 @@ export type FormRow = {
 	application_reference: string;
 	payload_hash: string;
 	status: FormStatus;
+	raw_payload: unknown;
 };
 
 export const findFormByReferenceForUpdate = async (
@@ -23,7 +24,7 @@ export const findFormByReferenceForUpdate = async (
 	const { rows } = await client.query<FormRow>(
 		// FOR UPDATE so dedupe/correction decisions are made against a row that
 		// cannot change (e.g. be completed by the worker) until we commit.
-		"SELECT id, application_reference, payload_hash, status FROM forms WHERE application_reference = $1 FOR UPDATE",
+		"SELECT id, application_reference, payload_hash, status, raw_payload FROM forms WHERE application_reference = $1 FOR UPDATE",
 		[applicationReference],
 	);
 	return rows[0];
@@ -77,6 +78,54 @@ export const findEligibleForms = async (pool: Pool, maxAttempts: number, now: Da
 		[maxAttempts, now],
 	);
 	return rows;
+};
+
+export const FAILED_STATUSES: FormStatus[] = ["validation_failed", "geocode_failed", "transform_failed"];
+
+export type FailedForm = {
+	application_reference: string;
+	status: FormStatus;
+	attempt_count: number;
+	last_error: unknown;
+	updated_at: Date;
+};
+
+export const findFailedForms = async (pool: Pool): Promise<FailedForm[]> => {
+	const { rows } = await pool.query<FailedForm>(
+		`SELECT application_reference, status, attempt_count, last_error, updated_at
+		 FROM forms
+		 WHERE status = ANY($1)
+		 ORDER BY updated_at`,
+		[FAILED_STATUSES],
+	);
+	return rows;
+};
+
+export type ParkedForm = {
+	id: string;
+	application_reference: string;
+	raw_payload: unknown;
+	status: FormStatus;
+};
+
+// Locked so a retry decision cannot race a concurrent correction or worker pass.
+export const findParkedFormsForUpdate = async (client: PoolClient): Promise<ParkedForm[]> => {
+	const { rows } = await client.query<ParkedForm>(
+		"SELECT id, application_reference, raw_payload, status FROM forms WHERE status = ANY($1) ORDER BY id FOR UPDATE",
+		[FAILED_STATUSES],
+	);
+	return rows;
+};
+
+// A retry restarts the pipeline: retry bookkeeping and the prior error are
+// cleared; the raw payload is untouched (it is what gets replayed).
+export const resetToReceived = async (client: PoolClient, formId: string): Promise<void> => {
+	await client.query(
+		`UPDATE forms
+		 SET status = 'received', last_error = NULL, attempt_count = 0, next_retry_at = NULL, updated_at = now()
+		 WHERE id = $1`,
+		[formId],
+	);
 };
 
 export const markFailure = async (

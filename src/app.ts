@@ -2,6 +2,7 @@ import express, { Express, NextFunction, Request, Response } from "express";
 import { Pool } from "pg";
 import { healthRouter } from "./routes/health";
 import { ingestRouter } from "./routes/ingest";
+import { retryRouter } from "./routes/retry";
 
 export type AppDeps = {
 	pool: Pool;
@@ -23,6 +24,7 @@ export const createApp = ({ pool }: AppDeps): Express => {
 
 	app.use(healthRouter(pool));
 	app.use(ingestRouter(pool));
+	app.use(retryRouter(pool));
 
 	return app;
 };
