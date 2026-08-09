@@ -3,7 +3,10 @@ import { loadConfig } from "./config";
 import { migrateAndLog } from "./db/migrate";
 import { createPool } from "./db/pool";
 import { lookupPostcode } from "./providers/idealpostcodes";
+import { sendEmail } from "./providers/sendgrid";
 import { startPollLoop, tick } from "./services/worker";
+
+const EMAIL_FROM = "noreply@healthtech1.uk";
 
 const main = async () => {
 	const config = loadConfig();
@@ -11,8 +14,19 @@ const main = async () => {
 
 	await migrateAndLog(pool);
 
-	const workerDeps = { pool, geocoder: { lookupPostcode } };
-	const workerConfig = { maxAttempts: config.maxAttempts, backoffBaseMs: config.backoffBaseMs };
+	const workerDeps = {
+		pool,
+		geocoder: { lookupPostcode },
+		emailSender: {
+			sendEmail: ({ to, subject, body }: { to: string; subject: string; body: string }) =>
+				sendEmail({ to, from: EMAIL_FROM, subject, body }),
+		},
+	};
+	const workerConfig = {
+		maxAttempts: config.maxAttempts,
+		backoffBaseMs: config.backoffBaseMs,
+		emailRecipient: config.emailRecipient,
+	};
 	startPollLoop(() => tick(workerDeps, workerConfig), config.pollIntervalMs);
 
 	const app = createApp({ pool });

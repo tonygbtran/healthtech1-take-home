@@ -4,20 +4,34 @@ import { validateIngestedForm } from "../forms/validate";
 import { HttpResponse } from "../providers/httpresponse";
 import { insertFormEvent } from "../repositories/events";
 import { EligibleForm, findEligibleForms, markFailure, markCompleted } from "../repositories/forms";
+import { findUnsentEmails, insertOutboxEmail, markEmailFailure, markEmailSent } from "../repositories/outbox";
 
 export type Geocoder = {
 	lookupPostcode: (postcode: string) => Promise<HttpResponse<Coordinates>>;
 };
 
+export type EmailSender = {
+	sendEmail: (email: { to: string; subject: string; body: string }) => Promise<HttpResponse<void>>;
+};
+
 export type WorkerDeps = {
 	pool: Pool;
 	geocoder: Geocoder;
+	emailSender: EmailSender;
 };
 
 export type WorkerConfig = {
 	maxAttempts: number;
 	backoffBaseMs: number;
+	emailRecipient: string;
 };
+
+// Backoff doubles per attempt; the exponent is clamped so an outbox email that
+// fails for a long time keeps retrying on a bounded (not runaway) interval.
+const MAX_BACKOFF_EXPONENT = 10;
+
+const backoffMs = (baseMs: number, attemptCount: number): number =>
+	baseMs * 2 ** Math.min(attemptCount - 1, MAX_BACKOFF_EXPONENT);
 
 const inTransaction = async (pool: Pool, work: (client: PoolClient) => Promise<void>): Promise<void> => {
 	const client = await pool.connect();
@@ -64,7 +78,7 @@ const handleGeocodeFailure = async (
 		await markFailure(client, form.id, {
 			status: parked ? "geocode_failed" : "validated",
 			attemptCount,
-			nextRetryAt: parked ? null : new Date(now().getTime() + config.backoffBaseMs * 2 ** (attemptCount - 1)),
+			nextRetryAt: parked ? null : new Date(now().getTime() + backoffMs(config.backoffBaseMs, attemptCount)),
 			lastError: { step: "geocode", statusCode },
 		});
 		if (parked) {
@@ -82,7 +96,7 @@ const handleGeocodeFailure = async (
 };
 
 const processForm = async (
-	{ pool, geocoder }: WorkerDeps,
+	{ pool, geocoder }: Omit<WorkerDeps, "emailSender">,
 	config: WorkerConfig,
 	form: EligibleForm,
 	now: () => Date,
@@ -114,6 +128,14 @@ const processForm = async (
 		if (completed) {
 			await insertFormEvent(client, { formId: form.id, fromStatus: "validated", toStatus: "geocoded" });
 			await insertFormEvent(client, { formId: form.id, fromStatus: "geocoded", toStatus: "completed" });
+			// Same transaction as the completion: the form cannot complete
+			// without its notification row existing, and vice versa.
+			await insertOutboxEmail(client, {
+				formId: form.id,
+				recipient: config.emailRecipient,
+				subject: `Form completed: ${form.application_reference}`,
+				body: JSON.stringify(transformed, null, 2),
+			});
 		}
 	});
 	if (completed) {
@@ -125,8 +147,33 @@ const processForm = async (
 	}
 };
 
+// Drains unsent outbox emails. Failures back off but never park: notifications
+// retry indefinitely, and a flaky provider never affects form processing.
+const drainOutbox = async ({ pool, emailSender }: WorkerDeps, config: WorkerConfig, now: () => Date): Promise<void> => {
+	const emails = await findUnsentEmails(pool, now());
+	for (const email of emails) {
+		const attemptCount = email.attempt_count + 1;
+		let response;
+		try {
+			response = await emailSender.sendEmail({ to: email.recipient, subject: email.subject, body: email.body });
+		} catch (error) {
+			response = { statusCode: 0 };
+			console.error(`[worker] outbox=${email.id} send threw`, error);
+		}
+		if (response.statusCode === 200) {
+			await markEmailSent(pool, email.id, attemptCount, now());
+			console.log(`[worker] outbox=${email.id} sent to ${email.recipient}`);
+		} else {
+			const nextRetryAt = new Date(now().getTime() + backoffMs(config.backoffBaseMs, attemptCount));
+			await markEmailFailure(pool, email.id, attemptCount, nextRetryAt);
+			console.log(`[worker] outbox=${email.id} send failed (attempt ${attemptCount}), retrying at ${nextRetryAt.toISOString()}`);
+		}
+	}
+};
+
 // The single test seam for the pipeline worker: one pass over all eligible
-// forms. The boot-time poll loop is a thin shell around this.
+// forms, then one pass over unsent outbox emails. The boot-time poll loop is
+// a thin shell around this.
 export const tick = async (deps: WorkerDeps, config: WorkerConfig, now: () => Date = () => new Date()): Promise<void> => {
 	const forms = await findEligibleForms(deps.pool, config.maxAttempts, now());
 	for (const form of forms) {
@@ -137,6 +184,7 @@ export const tick = async (deps: WorkerDeps, config: WorkerConfig, now: () => Da
 			console.error(`[worker] form=${form.id} ref=${form.application_reference} tick error`, error);
 		}
 	}
+	await drainOutbox(deps, config, now);
 };
 
 // Thin shell around tick(): serial ticks (never overlapping), errors logged

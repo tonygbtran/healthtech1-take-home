@@ -2,13 +2,10 @@ import request from "supertest";
 import { Pool } from "pg";
 import { createApp } from "../src/app";
 import { migrate } from "../src/db/migrate";
-import { Geocoder, tick } from "../src/services/worker";
+import { Geocoder } from "../src/services/worker";
 import { createTestPool, truncateAll } from "./helpers/db";
 import { example } from "./helpers/examples";
-
-const alwaysSucceed: Geocoder = {
-	lookupPostcode: async () => ({ statusCode: 200, body: { longitude: 50.05, latitude: -5.05 } }),
-};
+import { alwaysSucceedGeocoder as alwaysSucceed, tickForms as tick } from "./helpers/worker";
 
 const config = { maxAttempts: 5, backoffBaseMs: 1000 };
 
