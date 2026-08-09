@@ -108,12 +108,21 @@ const processForm = async (
 		return;
 	}
 
+	let completed = false;
 	await inTransaction(pool, async (client) => {
-		await insertFormEvent(client, { formId: form.id, fromStatus: "validated", toStatus: "geocoded" });
-		await markCompleted(client, form.id, transformed, now());
-		await insertFormEvent(client, { formId: form.id, fromStatus: "geocoded", toStatus: "completed" });
+		completed = await markCompleted(client, form.id, form.payload_hash, transformed, now());
+		if (completed) {
+			await insertFormEvent(client, { formId: form.id, fromStatus: "validated", toStatus: "geocoded" });
+			await insertFormEvent(client, { formId: form.id, fromStatus: "geocoded", toStatus: "completed" });
+		}
 	});
-	console.log(`[worker] form=${form.id} ref=${form.application_reference} completed`);
+	if (completed) {
+		console.log(`[worker] form=${form.id} ref=${form.application_reference} completed`);
+	} else {
+		// Form was corrected (or completed) while we were processing it; the
+		// corrected payload will be picked up on a later tick.
+		console.log(`[worker] form=${form.id} ref=${form.application_reference} stale completion skipped`);
+	}
 };
 
 // The single test seam for the pipeline worker: one pass over all eligible
